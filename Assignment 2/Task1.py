@@ -21,8 +21,12 @@ from matplotlib import rcParams
 import numpy as np
 import pandas as pd
 import seaborn as sns
-plt.style.use('ggplot')
+plt.style.use('Solarize_Light2')
+style.use('Solarize_Light2')
 # %matplotlib inline
+print(plt.style.available)
+import matplotlib as mpl
+mpl.rcParams['figure.dpi'] = 60
 
 df = pd.DataFrame(pd.read_csv('BATADAL_trainingset1.csv'))
 pd.set_option('display.expand_frame_repr', False)
@@ -57,5 +61,150 @@ data_preproc3.plot(figsize=(20,10), x='date')
 
 # -
 
-rcParams['figure.figsize'] = 12,10
-sns.heatmap(df.corr())
+# rcParams['figure.figsize'] = 12,10
+# sns.heatmap(df.corr())
+#
+# values = df['F_PU1']
+# rolling_mean = values.rolling(window=20).mean()
+# rolling_mean2 = values.rolling(window=50).mean()
+# plt.plot(df['DATETIME'], values, label='AMD')
+# plt.plot(df['DATETIME'], rolling_mean, label='AMD 20 Day SMA', color='orange')
+# plt.plot(df['DATETIME'], rolling_mean2, label='AMD 50 Day SMA', color='magenta')
+# plt.legend(loc='upper left')
+# plt.show()
+
+# +
+from numpy import mean
+from sklearn.metrics import mean_squared_error
+
+def moving_average_prediction(data, window = 3):
+    test = [data[i] for i in range(window, len(data))]
+    predictions = []
+    
+    current_prediction = window
+    for t in range(len(test)):
+        predicted_value = mean([data[i] for i in range(current_prediction-window,current_prediction)])
+        predictions.append(predicted_value)
+        current_prediction += 1
+    # 	print('predicted=%f, expected=%f' % (yhat, obs))
+    
+    error = mean_squared_error(test, predictions)
+    print('Test MSE: %.3f' % error)
+    return test, predictions
+
+data, predictions = moving_average_prediction(df['F_PU1'].values, 3)
+
+# plots
+pd.DataFrame({"prediction":predictions[1000:2000],
+            "actual": data[1000:2000]}).plot(figsize=(20,10))
+# zoom plot
+pd.DataFrame({"prediction":predictions[:100],
+            "actual": data[:100]}).plot(figsize=(20,10))
+# -
+
+# # Task 2 - ARMA
+
+# ARMA
+# %pip install statsmodels scipy
+
+import numpy as np
+from scipy import stats
+import pandas as pd
+import matplotlib.pyplot as plt
+import statsmodels.api as sm
+from statsmodels.graphics.api import qqplot
+
+# ## Testing serial correlation with the Durbin-Watson statistic
+# The DW statistic will lie in the 0-4 range, with a value near two indicating no first-order serial correlation. Positive serial correlation is associated with DW values below 2 and negative serial correlation with DW values above 2.
+# The value of Durbin-Watson statistic is close to 2 if the errors are uncorrelated. 
+#
+# The Durbin-Watson statistic here is 0.0022. That means that there is a strong evidence that the variable has high positive autocorrelation.
+
+# Durbin-Watson statistic. 
+sm.stats.durbin_watson(df['F_PU1'])
+sensors_to_model = ['F_PU1']
+
+# ## Autocorrelation function
+# We calculate the autocorrelation and partial autocorrelation functions to make an informed descision about what ARMA parameters to use.
+
+fig = plt.figure(figsize=(12,8))
+ax1 = fig.add_subplot(211)
+fig = sm.graphics.tsa.plot_acf(df['F_PU1'].values.squeeze(), lags=40, ax=ax1)
+ax2 = fig.add_subplot(212)
+fig = sm.graphics.tsa.plot_pacf(df['F_PU1'], lags=40, ax=ax2)
+
+# To determine the ARMA parameters we use the following rules of thumb:
+# - Rule 1: If the ACF shows exponential decay, the PACF has a spike at lag 1, and no correlation for other lags, then use one autoregressive (p)parameter
+# - Rule 2: If the ACF shows a sine-wave shape pattern or a set of exponential decays, the PACF has spikes at lags 1 and 2, and no correlation for other lags, the use two autoregressive (p) parameters
+# - Rule 3: If the ACF has a spike at lag 1, no correlation for other lags, and the PACF damps out exponentially, then use one moving average (q) parameter.
+# - Rule 4: If the ACF has spikes at lags 1 and 2, no correlation for other lags, and the PACF has a sine-wave shape pattern or a set of exponential decays, then use two moving average (q) parameter.
+# - Rule 5: If the ACF shows exponential decay starting at lag 1, and the PACF shows exponential decay starting at lag 1, then use one autoregressive (p) and one moving average (q) parameter.
+#
+# Looking at the graphs above, we conclude that rule 2 seems to apply best to out data. Thus, we will use 2 autoregressive and no moving average parameters.
+
+# +
+arma_mod20 = sm.tsa.ARMA(df['F_PU1'], (2,0)).fit()
+print(arma_mod20.params)
+
+# Akaike Information Criterion (AIC), 
+# Schwarz Bayesian Information Criterion (BIC), and 
+# Hannan-Quinn Information Criterion (HQIC). Our goalis to choose a model that minimizes 
+# (AIC, BIC, HQIC).
+print(arma_mod20.aic, arma_mod20.bic, arma_mod20.hqic)
+
+
+# The Durbin-Watson statistic is now very close to 2
+print(sm.stats.durbin_watson(arma_mod20.resid.values))
+
+#The equations are somewhat simpler if the time series is first reduced to zero-mean by subtracting the sample mean. Therefore, we will work with the mean-adjusted series
+# -
+
+
+
+
+# Plotting the residuals
+fig = plt.figure(figsize=(12,8))
+ax = fig.add_subplot(111)
+resid20 = arma_mod20.resid
+ax = resid.plot(ax=ax);
+
+# +
+fig = plt.figure(figsize=(12,8))
+
+ax = fig.add_subplot(111)
+fig = qqplot(resid20, line='q', ax=ax, fit=True)
+# -
+
+stats.normaltest(resid20)
+
+
+# ## ARMA Model Autocorrelation
+
+fig = plt.figure(figsize=(12,8))
+ax1 = fig.add_subplot(211)
+fig = sm.graphics.tsa.plot_acf(resid20.values.squeeze(), lags=40, ax=ax1)
+ax2 = fig.add_subplot(212)
+fig = sm.graphics.tsa.plot_pacf(resid20, lags=40, ax=ax2)
+
+# ## Prediction
+
+prediction = arma_mod20.predict()
+pd.DataFrame({"prediction":prediction[100:1000],
+            "actual": df['F_PU1'][103:1000]}).plot(figsize=(20,10))
+
+
+# +
+def mean_absolute_err(y, yhat):
+    return np.mean((np.abs(y.sub(yhat).mean()) / yhat)) # or percent error = * 100
+
+def mean_forecast_err(y, yhat):
+    return y.sub(yhat).mean()
+
+
+# +
+
+
+print("MFE = ", mean_forecast_err(df['F_PU1'], prediction))
+print("MAE = ", mean_absolute_err(df['F_PU1'], prediction))
+print("MSE = ", mean_squared_error(df['F_PU1'], prediction))
+

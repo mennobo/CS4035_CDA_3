@@ -93,7 +93,33 @@ def moving_average_prediction(data, window = 3):
     print('Test MSE: %.3f' % error)
     return test, predictions
 
+
+print('F_PU1 window 1')
+data, predictions = moving_average_prediction(df['F_PU1'].values, 1)
+print('F_PU1 window 2')
+data, predictions = moving_average_prediction(df['F_PU1'].values, 2)
+print('F_PU1 window 3')
 data, predictions = moving_average_prediction(df['F_PU1'].values, 3)
+print('F_PU1 window 4')
+data, predictions = moving_average_prediction(df['F_PU1'].values, 4)
+
+print('P_J14 window 1')
+data, predictions = moving_average_prediction(df['P_J14'].values, 1)
+print('P_J14 window 2')
+data, predictions = moving_average_prediction(df['P_J14'].values, 2)
+print('P_J14 window 3')
+data, predictions = moving_average_prediction(df['P_J14'].values, 3)
+print('P_J14 window 4')
+data, predictions = moving_average_prediction(df['P_J14'].values, 4)
+
+print('L_T1 window 1')
+data, predictions = moving_average_prediction(df['L_T1'].values, 1)
+print('L_T1 window 2')
+data, predictions = moving_average_prediction(df['L_T1'].values, 2)
+print('L_T1 window 3')
+data, predictions = moving_average_prediction(df['L_T1'].values, 3)
+print('L_T1 window 4')
+data, predictions = moving_average_prediction(df['L_T1'].values, 4)
 
 # plots
 pd.DataFrame({"prediction":predictions[1000:2000],
@@ -145,12 +171,13 @@ fig = sm.graphics.tsa.plot_pacf(df['F_PU1'], lags=40, ax=ax2)
 
 # +
 
-def do_arma(train_series, test_series, params):
-    print(f'####################################\nCurrent Series: {series.name}\n####################################')
+def do_arma(train_series, test_series, params, attack_flags):
+    print(f'####################################\nCurrent Series: {train_series.name}\n####################################')
     # Find optimal parameters based on AIC 
     best_params = params[0]
     lowest_aic = 999999999
     for param_set in params:
+        print("testing " + str(param_set))
         arma_mod = sm.tsa.ARMA(train_series, param_set).fit()
         if arma_mod.aic < lowest_aic:
             lowest_aic = arma_mod.aic
@@ -161,10 +188,11 @@ def do_arma(train_series, test_series, params):
         
     print('best params: ' + str(best_params))
     train_model = sm.tsa.ARMA(train_series, best_params).fit()
-    test_model = ARIMA(test_series, best_params).fit(start_params = train_model.params, transpars = False, method='mle', trend='nc',disp=0)
+    print(str(train_model.params))
+    test_model = sm.tsa.ARMA(test_series, best_params).fit(start_params = train_model.params)
 
     # The Durbin-Watson statistic is now very close to 2
-    print(sm.stats.durbin_watson(arma.resid.values))
+    print(sm.stats.durbin_watson(test_model.resid.values))
 
     #The equations are somewhat simpler if the time series is first reduced to zero-mean by subtracting the sample mean. Therefore, we will work with the mean-adjusted series
     # -
@@ -172,7 +200,7 @@ def do_arma(train_series, test_series, params):
     # Plotting the residuals
     fig = plt.figure(figsize=(12,8))
     ax = fig.add_subplot(111)
-    resid = arma.resid
+    resid = test_model.resid
     ax = resid.plot(ax=ax);
 
     # +
@@ -182,7 +210,7 @@ def do_arma(train_series, test_series, params):
     fig = qqplot(resid, line='q', ax=ax, fit=True)
     # -
 
-    stats.normaltest(resid)
+#     stats.normaltest(resid)
 
     # ## ARMA Model Autocorrelation
     print("Autocorrelation plots:")
@@ -194,26 +222,28 @@ def do_arma(train_series, test_series, params):
 
     # ## Prediction
 
-    prediction = arma.predict()
+    prediction = test_model.predict()
     pd.DataFrame({"prediction":prediction[100:600],
                 "actual": train_series[100:600]}).plot(figsize=(20,10))
-    return prediction
+#     return prediction
     # ## Anomaly detection
     # Use the parameters learned by the best model on Train set and apply it on test set
+    
     std = np.std(test_model.resid)
     threshold = 2*std
     det_anom_lit = test_model.resid[test_model.resid > threshold]
+    test_model = pd.DataFrame({ 'ATT_FLAG': attack_flags })
     ind=[]
     tp=0
     fp=0
     for index, a in det_anom_lit.items():
         ind.append(index)
-        if test_dataset.ATT_FLAG[index]==1:
+        if test_model.ATT_FLAG[index]==1:
             tp+=1
         else:
             fp+=1
-    tn=test_dataset.loc[test_dataset.ATT_FLAG==-999].shape[0]-fp
-    fn=test_dataset.loc[test_dataset.ATT_FLAG==1].shape[0]-tp
+    tn=test_model.loc[test_model.ATT_FLAG==-999].shape[0]-fp
+    fn=test_model.loc[test_model.ATT_FLAG==1].shape[0]-tp
     Accuracy=100.0*(tp+tn)/(tp+tn+fp+fn)
     if (tp+fp)!=0:
         Precision=100.0*tp / (tp + fp)
@@ -239,12 +269,19 @@ def mean_forecast_err(y, yhat):
 
 
 # +
-param_sets = [(0,0), (0,1), (0,2), (1,0), (1,1), (1,2), (2,0), (2,1), (2,2)]
-prediction = do_arma(df['P_J256'], df_attacks['P_J256'], param_sets)
+param_sets = [(0,0), (0,1), (0,2), (1,0), (1,1), (1,2), (2,0), (2,2)]
+prediction = do_arma(df['F_PU8'], df_attacks[' F_PU8'], param_sets, df_attacks[' ATT_FLAG'])
 
-print("MFE = ", mean_forecast_err(df['P_J256'], prediction))
-print("MAE = ", mean_absolute_err(df['P_J256'], prediction))
-print("MSE = ", mean_squared_error(df['P_J256'], prediction))
+# print("MFE = ", mean_forecast_err(df['P_J256'], prediction))
+# print("MAE = ", mean_absolute_err(df['P_J256'], prediction))
+# print("MSE = ", mean_squared_error(df['P_J256'], prediction))
+# -
+
+
+
+
+
+
 
 
 # +
@@ -255,5 +292,12 @@ print("MAE = ", mean_absolute_err(df['F_PU1'], prediction))
 print("MSE = ", mean_squared_error(df['F_PU1'], prediction))
 # -
 
-df_attacks['F_PU1']
-# df_attacks['F_PU1']
+df_attacks.head(2)
+
+
+
+
+
+
+
+

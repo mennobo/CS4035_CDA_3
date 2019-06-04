@@ -26,7 +26,9 @@ style.use('Solarize_Light2')
 # %matplotlib inline
 print(plt.style.available)
 import matplotlib as mpl
-mpl.rcParams['figure.dpi'] = 60
+mpl.rcParams['figure.dpi'] = 150
+rcParams['figure.figsize'] = 6,5
+
 
 df = pd.DataFrame(pd.read_csv('BATADAL_trainingset1.csv')) # No attacks
 df_attacks = pd.DataFrame(pd.read_csv('BATADAL_trainingset2.csv')) # With attacks
@@ -60,19 +62,30 @@ data_preproc3 = pd.DataFrame({
 data_preproc.plot(figsize=(20,10), x='date')
 data_preproc2.plot(figsize=(20,10), x='date')
 data_preproc3.plot(figsize=(20,10), x='date')
-# -
 
-# rcParams['figure.figsize'] = 12,10
-# sns.heatmap(df.corr())
-#
-# values = df['F_PU1']
-# rolling_mean = values.rolling(window=20).mean()
-# rolling_mean2 = values.rolling(window=50).mean()
-# plt.plot(df['DATETIME'], values, label='AMD')
-# plt.plot(df['DATETIME'], rolling_mean, label='AMD 20 Day SMA', color='orange')
-# plt.plot(df['DATETIME'], rolling_mean2, label='AMD 50 Day SMA', color='magenta')
-# plt.legend(loc='upper left')
-# plt.show()
+# +
+sns.heatmap(df.corr())
+values = df['F_PU1']
+plt.show()
+
+# Remove all columns with a perfect correlation: 
+perfect_cor = ['S_PU1', 'F_PU3', 'S_PU3', 'F_PU5', 'S_PU5', 'F_PU9', 'S_PU9', 'ATT_FLAG']
+# check all the removed columns on their data (they all contain exactly the same value everywhere so they can be removed)
+final_columns = list(df.columns)
+for col in perfect_cor:
+    print(df[col].value_counts())
+    final_columns.remove(col)
+
+def trimm_correlated(df_in, threshold):
+    df_corr = df_in.corr(method='pearson', min_periods=1)
+    df_not_correlated = ~(df_corr.mask(np.tril(np.ones([len(df_corr)]*2, dtype=bool))).abs() > threshold).any()
+    un_corr_idx = df_not_correlated.loc[df_not_correlated[df_not_correlated.index] == True].index
+    df_out = df_in[un_corr_idx]
+    return df_out
+
+new_df = trimm_correlated(df[final_columns], 0.8)
+sns.heatmap(new_df.corr())
+
 
 # +
 from numpy import mean
@@ -131,9 +144,14 @@ pd.DataFrame({"prediction":predictions[:100],
 
 # # Task 2 - ARMA
 
-# ARMA
-# %pip install statsmodels scipy
+# +
+# %pip install scipy
 
+# Make sure you have statsmodels >0.9.0 as it fails to import statsmodels.api
+# see https://github.com/statsmodels/statsmodels/issues/5759
+# %pip install git+https://github.com/statsmodels/statsmodels
+
+# +
 import numpy as np
 # from scipy import stats
 import pandas as pd
@@ -141,21 +159,22 @@ import matplotlib.pyplot as plt
 import statsmodels.api as sm
 from statsmodels.graphics.api import qqplot
 
-# ## Testing serial correlation with the Durbin-Watson statistic
-# The DW statistic will lie in the 0-4 range, with a value near two indicating no first-order serial correlation. Positive serial correlation is associated with DW values below 2 and negative serial correlation with DW values above 2.
-# The value of Durbin-Watson statistic is close to 2 if the errors are uncorrelated. 
-#
-# The Durbin-Watson statistic here is 0.0022. That means that there is a strong evidence that the variable has high positive autocorrelation.
+mpl.rcParams['figure.dpi'] = 150
+rcParams['figure.figsize'] = 6,5
 
-# Durbin-Watson statistic. 
-sm.stats.durbin_watson(df['F_PU1'])
-sensors_to_model = ['F_PU1']
+# Reload dataset to make sure any changes are reset
+df = pd.DataFrame(pd.read_csv('BATADAL_trainingset1.csv')) # No attacks
+df_attacks = pd.DataFrame(pd.read_csv('BATADAL_trainingset2.csv')) # With attacks
+df_nolabels = pd.DataFrame(pd.read_csv('BATADAL_test_dataset.csv')) # With attacks no labels
+pd.set_option('display.expand_frame_repr', False)
+# -
 
 # ## Autocorrelation function
 # We calculate the autocorrelation and partial autocorrelation functions to make an informed descision about what ARMA parameters to use.
 
 fig = plt.figure(figsize=(12,8))
 ax1 = fig.add_subplot(211)
+# from statsmodels.graphics.tsaplots import plot_acf
 fig = sm.graphics.tsa.plot_acf(df['F_PU1'].values.squeeze(), lags=40, ax=ax1)
 ax2 = fig.add_subplot(212)
 fig = sm.graphics.tsa.plot_pacf(df['F_PU1'], lags=40, ax=ax2)
@@ -170,32 +189,39 @@ fig = sm.graphics.tsa.plot_pacf(df['F_PU1'], lags=40, ax=ax2)
 # Looking at the graphs above, we conclude that rule 2 seems to apply best to out data. Thus, we will use 2 autoregressive and no moving average parameters.
 
 # +
-
-def do_arma(train_series, test_series, params, attack_flags):
-    print(f'####################################\nCurrent Series: {train_series.name}\n####################################')
+# "The higher the AR order gets, the lower the AIC gets." you care about the rate of change. When the AIC does not drop substantially with the increase of an AR term, the search can stop for that sensor. 
+def test_arma_params(train_series, params):
     # Find optimal parameters based on AIC 
+    arma_mod = sm.tsa.ARMA(train_series, (0,0)).fit()
+    
+    zero_aic = arma_mod.aic
     best_params = params[0]
-    lowest_aic = 999999999
+    lowest_aic = arma_mod.aic
+    prev_aic = arma_mod.aic
+    
+    print(f"first aic is {prev_aic}")
     for param_set in params:
         print("testing " + str(param_set))
-        arma_mod = sm.tsa.ARMA(train_series, param_set).fit()
+        try:
+            arma_mod = sm.tsa.ARMA(train_series, param_set).fit()
+            print(str(arma_mod.aic))
+        except:
+            continue
+        print(f"Change: {arma_mod.aic - prev_aic}, change vs first: {arma_mod.aic - zero_aic}")
+        prev_aic = arma_mod.aic
         if arma_mod.aic < lowest_aic:
             lowest_aic = arma_mod.aic
             best_params = param_set
-#         print(sm.stats.durbin_watson(arma_mod.resid.values))
-#         print(arma_mod.params)
-#         print(arma_mod.aic, arma_mod.bic, arma_mod.hqic)
-        
+            
     print('best params: ' + str(best_params))
-    train_model = sm.tsa.ARMA(train_series, best_params).fit()
-    print(str(train_model.params))
-    test_model = sm.tsa.ARMA(test_series, best_params).fit(start_params = train_model.params)
 
-    # The Durbin-Watson statistic is now very close to 2
-    print(sm.stats.durbin_watson(test_model.resid.values))
+
+def do_arma(train_series, test_series, params, attack_flags):
+    print(f'####################################\nCurrent Series: {train_series.name}\n####################################')
+    train_model = sm.tsa.ARMA(train_series, params).fit()#method='mle', trend='nc')
+    test_model = sm.tsa.ARMA(test_series, params).fit(start_params = train_model.params)#, transpars = False, method='mle', trend='nc')
 
     #The equations are somewhat simpler if the time series is first reduced to zero-mean by subtracting the sample mean. Therefore, we will work with the mean-adjusted series
-    # -
 
     # Plotting the residuals
     fig = plt.figure(figsize=(12,8))
@@ -205,7 +231,6 @@ def do_arma(train_series, test_series, params, attack_flags):
 
     # +
     fig = plt.figure(figsize=(12,8))
-
     ax = fig.add_subplot(111)
     fig = qqplot(resid, line='q', ax=ax, fit=True)
     # -
@@ -221,29 +246,43 @@ def do_arma(train_series, test_series, params, attack_flags):
     fig = sm.graphics.tsa.plot_pacf(resid, lags=40, ax=ax2)
 
     # ## Prediction
+#     prediction = test_model.predict()
+#     pd.DataFrame({"prediction":prediction[100:400],
+#                 "actual": train_series[100:400]}).plot(figsize=(20,10))
 
-    prediction = test_model.predict()
-    pd.DataFrame({"prediction":prediction[100:600],
-                "actual": train_series[100:600]}).plot(figsize=(20,10))
-#     return prediction
-    # ## Anomaly detection
-    # Use the parameters learned by the best model on Train set and apply it on test set
+    # ## Anomaly detection    
+#     train_resid = np.square(train_model.resid)
+#     t_max = np.max(train_resid)
+#     t_min = np.min(train_resid)
     
-    std = np.std(test_model.resid)
-    threshold = 2*std
-    det_anom_lit = test_model.resid[test_model.resid > threshold]
+    resid = test_model.resid
+    std = np.std(resid)
+    anomaly_thresh = 2 * std
+    detected_anomalies = test_model.resid[(resid) > anomaly_thresh]
+#     arma_residuals = np.square(test_model.resid)
+#     print(arma_residuals)
+#     print(f"tmin={t_min}\ntmax={t_max}")
+#     arma_residuals = arma_residuals.sum()
+#     all_detected_attacks = np.where((arma_residuals > t_max or arma_residuals < t_min))
+#     TP = 0
+#     FP = 0
+#     for index in all_detected_attacks:
+#         if index in list(df_attacks.loc[df_attacks[' ATT_FLAG']==1].index):
+#             TP +=1
+#         else:
+#             FP +=1 
+#     print(f"TP={TP}, FP={FP}")
+    
     test_model = pd.DataFrame({ 'ATT_FLAG': attack_flags })
-    ind=[]
     tp=0
     fp=0
-    for index, a in det_anom_lit.items():
-        ind.append(index)
-        if test_model.ATT_FLAG[index]==1:
+    for index, _ in detected_anomalies.items():
+        if attack_flags[index]==1:
             tp+=1
         else:
             fp+=1
-    tn=test_model.loc[test_model.ATT_FLAG==-999].shape[0]-fp
-    fn=test_model.loc[test_model.ATT_FLAG==1].shape[0]-tp
+    tn=test_model.loc[attack_flags==-999].shape[0]-fp
+    fn=test_model.loc[attack_flags==1].shape[0]-tp
     Accuracy=100.0*(tp+tn)/(tp+tn+fp+fn)
     if (tp+fp)!=0:
         Precision=100.0*tp / (tp + fp)
@@ -258,6 +297,7 @@ def do_arma(train_series, test_series, params, attack_flags):
     print("Recall: %.2f" %Recall)
     print("F_score: %.2f" % F_score)
     print('  ')
+    return detected_anomalies, resid
 
 
 # +
@@ -267,37 +307,246 @@ def mean_absolute_err(y, yhat):
 def mean_forecast_err(y, yhat):
     return y.sub(yhat).mean()
 
+def plot_attacks(residuals, attacks, detected_anomalies, show_range = (0,5000)):
+    show_from = show_range[0]
+    show_to = show_range[1]
+    detected_attacks = []
+    for a in range(len(df_attacks)):
+            if a in detected_anomalies:
+                detected_attacks.append(0.7)
+            else:
+                detected_attacks.append(-999)
+
+    detected_attacks = pd.DataFrame(detected_attacks)
+    plt.figure()
+    residuals = residuals - np.mean(resid)
+    plt.plot(residuals[show_from:show_to], label="residuals")
+    plt.plot(attacks[show_from:show_to], label="Attacks")
+    plt.plot(detected_attacks[show_from:show_to], label="Detected Atacks")
+
+    axes = plt.gca()
+    axes.set_ylim([np.min(residuals)*2,max(np.max(residuals)*1.5, 2)])
+    plt.legend()
+    plt.show()
+
 
 # +
-param_sets = [(0,0), (0,1), (0,2), (1,0), (1,1), (1,2), (2,0), (2,2)]
-prediction = do_arma(df['F_PU8'], df_attacks[' F_PU8'], param_sets, df_attacks[' ATT_FLAG'])
+# param_sets = [(1,0), (2,0), (3,0), (4,0), (5,0), (6,0), (7,0), (8,0)] # best 4,0
+# param_sets = [(4,0), (4,1), (4,2), (4,3), (4,4), (4,5), (4,6), (4,7), (4,8)] # best 4,5
+# test_arma_params(df['F_PU7'], param_sets)
+
+anomalies, resid = do_arma(df['F_PU7'], df_attacks[' F_PU7'], (2,3), df_attacks[' ATT_FLAG'])
+# Zoom in on especially Attack#6, which attacks F_PU7
+plot_attacks(resid, df_attacks[' ATT_FLAG'], anomalies, (3400,3900))
 
 # print("MFE = ", mean_forecast_err(df['P_J256'], prediction))
 # print("MAE = ", mean_absolute_err(df['P_J256'], prediction))
 # print("MSE = ", mean_squared_error(df['P_J256'], prediction))
+
+
+# +
+# param_sets = [(1,0), (2,0), (3,0), (4,0), (5,0), (6,0), (7,0), (8,0)] # best 5,0
+# param_sets = [(5,0), (5,1), (5,2), (5,3), (5,4), (5,5), (5,6), (5,7), (5,8)] # best 5,2?
+# test_arma_params(df['L_T4'], param_sets)
+
+anomalies, resid = do_arma(df['L_T4'], df_attacks[' L_T4'], (5,2), df_attacks[' ATT_FLAG'])
+# Zoom in on especially Attack#5 and 6, which attacks F_PU7, affecting L_T4
+plot_attacks(resid, df_attacks[' ATT_FLAG'], anomalies, (3000,4000))
+
+# +
+# param_sets = [(1,0), (2,0), (3,0), (4,0), (5,0), (6,0), (7,0), (8,0)] # best 4,0
+# param_sets = [(4,0), (4,1), (4,2), (4,3), (4, 4), (4,5), (4,6)] # best 4,2
+# test_arma_params(df['L_T1'], param_sets)
+
+anomalies, resid = do_arma(df['L_T1'], df_attacks[' L_T1'], (4,2), df_attacks[' ATT_FLAG'])
+# zoom in on attacks 3 and 4 specifically
+plot_attacks(resid, df_attacks[' ATT_FLAG'], anomalies, (1500,3000))
+
+
+# +
+# param_sets = [(1,0), (2,0), (3,0), (4,0), (5,0), (6,0), (7,0), (8,0)] # best 3,0
+# param_sets = [(3,0), (3,1), (3,2), (3,3), (3, 4), (3,5), (3,6)] # best 3,0 or 3,4
+# test_arma_params(df['L_T7'], param_sets)
+
+anomalies, resid = do_arma(df['L_T7'], df_attacks[' L_T7'], (3,0), df_attacks[' ATT_FLAG'])
+plot_attacks(resid, df_attacks[' ATT_FLAG'], anomalies, (1500,3000))
+
+# +
+# param_sets = [(1,0), (2,0), (3,0), (4,0), (5,0), (6,0), (7,0), (8,0)] # best 2,0
+# param_sets = [(2,0), (2,1), (2,2), (2,3), (2,4), (2,5), (2,6)] # best 2,4
+# test_arma_params(df['F_PU7'], param_sets)
+
+anomalies, resid = do_arma(df['P_J256'], df_attacks[' P_J256'], (2,4), df_attacks[' ATT_FLAG'])
+plot_attacks(resid, df_attacks[' ATT_FLAG'], anomalies)
 # -
+# ## PCA Task
 
+# +
+# Preprocessing
+from tslearn.preprocessing import TimeSeriesScalerMeanVariance
+from sklearn.decomposition import PCA
 
+df = df.drop('DATETIME', axis=1)
 
+def normalize(df):
+    df_normalized = df.copy()
+    df_normalized = df_normalized
 
+    normalize = TimeSeriesScalerMeanVariance(mu=0, std=1)
+    for col in df:
+        df_normalized[col] = normalize.fit_transform(df_normalized[col])[0]
+
+#     for col in df:
+#         assert abs(np.mean(df_normalized[col])) < 1e-9
+#         assert abs(np.std(df_normalized[col])) < 1 + 1e-10
+#         assert abs(np.std(df_normalized[col])) > 1 - 1e-10 or abs(np.std(df_normalized[col])) == 0
+    
+    return df_normalized
+
+df_normalized = normalize(df)
+
+# -
 
 
 
 
 # +
-do_arma(df['F_PU1'], (2,0))
+## Residuals 
+pca = PCA()
+pca.fit(df_normalized)
+df_inverse_transformed = pca.inverse_transform(df_normalized)
+pca_residual = df_normalized - df_inverse_transformed
+pca_residual = np.square(pca_residual)
+pca_residual_combined = pca_residual.sum(axis=1) 
 
-print("MFE = ", mean_forecast_err(df['F_PU1'], prediction))
-print("MAE = ", mean_absolute_err(df['F_PU1'], prediction))
-print("MSE = ", mean_squared_error(df['F_PU1'], prediction))
+figure, ax = plt.subplots()
+plt.xlabel('Data points')
+plt.ylabel('Residual')
+plt.figure()
+ax.plot(pca_residual_combined)
+figure.savefig('pcaresidual.png')
 # -
 
-df_attacks.head(2)
+## Drop the abnormalities
+indices_to_drop = np.where(pca_residual_combined > 2000)
+print(indices_to_drop)
+index = indices_to_drop[0]
+print('before', df_normalized.shape)
+df_cleaned = df_normalized.copy()
+for index in indices_to_drop:
+    row = df.iloc[index]
+    df_cleaned = df_normalized.drop(row.index)
+print('after', df_cleaned.shape)
+
+# Re-normalize
+df_cleaned_normalized = normalize(df_cleaned)
 
 
+## Find importance of each principal component
+pca = PCA()
+pca.fit(df_cleaned_normalized)
+x_axis = np.arange(1, df_cleaned_normalized.shape[1]+1, 1)
+plt.xlabel('Principal Component')
+plt.ylabel('Variance Captured')
+plt.plot(x_axis, pca.explained_variance_ratio_)
 
 
+# Cummulative Variance
+cummulative_variance = pca.explained_variance_ratio_.cumsum()
+x_axis = np.arange(1, df_cleaned_normalized.shape[1]+1, 1)
+plt.xlabel('Principal components')
+plt.ylabel('Cummulative variance captured')
+plt.plot(x_axis, cummulative_variance)
 
 
+# +
+# Residual is now low
+pca = PCA()
+pca.fit(df_cleaned_normalized)
+df_inverse_transformed = pca.inverse_transform(df_cleaned_normalized)
+pca_residual = df_cleaned_normalized - df_inverse_transformed
+pca_residual = np.square(pca_residual)
+pca_residual_combined = pca_residual.sum(axis=1) 
 
+figure, ax = plt.subplots()
+plt.xlabel('Data points')
+plt.ylabel('Residual')
+plt.figure()
+ax.plot(pca_residual_combined)
+# -
+
+# Prepare the test dataset
+test_dataset = normalize(df_attacks.drop('DATETIME', axis=1).drop(' ATT_FLAG', axis=1))
+
+# # Perform PCA analysis
+
+# +
+# Find threshold 
+pca = PCA(n_components=15)
+# pca.fit(df_cleaned_normalized)
+transformed = pca.fit_transform(df_cleaned_normalized)
+df_inverse_transformed = pca.inverse_transform(transformed)
+pca_residual = df_cleaned_normalized - df_inverse_transformed
+pca_residual = np.square(pca_residual)
+pca_residual_combined = pca_residual.sum(axis=1) 
+threshold_max = np.max(pca_residual_combined)
+threshold_min = np.min(pca_residual_combined)
+
+# analyse test set
+pca = PCA(n_components=15)
+pca.fit(test_dataset)
+transformed = pca.fit_transform(test_dataset)
+reconstructed = pca.inverse_transform(transformed)
+
+residual_pca = test_dataset - reconstructed
+residual_pca = np.square(residual_pca)
+residual_pca = residual_pca.sum(axis=1) 
+
+# Find attacks
+attack_indices = np.where((residual_pca > threshold_max))
+attack_indices2 = np.where((residual_pca < threshold_min))
+
+all_detected_attacks = np.append(attack_indices[0], attack_indices2[0])
+
+TP = 0
+FP = 0
+for index in all_detected_attacks:
+    if index in list(df_attacks.loc[df_attacks[' ATT_FLAG']==1].index):
+        TP +=1
+    else:
+        FP +=1 
+        
+residual_pca[2893] > threshold_max
+2893 in all_detected_attacks
+print(f'TP={TP}\nFP={FP}')
+
+
+# +
+def plot_attacks(residuals, attacks, detected_anomalies):
+    show_from = 0
+    show_to = 5000
+    detected_attacks = []
+    for a in range(len(df_attacks)):
+            if a in detected_anomalies:
+                detected_attacks.append(0.5)
+            else:
+                detected_attacks.append(-99)
+
+    detected_attacks = pd.DataFrame(detected_attacks)
+    plt.figure()
+    residuals = residuals - np.mean(residuals)
+#     plt.plot(residuals[show_from:show_to], label="residuals (normalized)")
+    plt.plot(attacks[show_from:show_to], label="Atacks")
+    plt.plot(detected_attacks[show_from:show_to], label="Detected Atacks")
+
+    axes = plt.gca()
+    axes.set_ylim([-5,10])
+    plt.legend()
+    plt.show()
+    
+plot_attacks(residual_pca, df_attacks[' ATT_FLAG'], all_detected_attacks)
+
+# +
+
+# df_attacks.set_index("DATETIME")[" ATT_FLAG"]["09/10/16 07":"11/10/16 23"]
 

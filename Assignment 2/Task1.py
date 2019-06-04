@@ -13,8 +13,6 @@
 #     name: python3
 # ---
 
-# ## Task 1 - Familiarization
-
 import matplotlib.pyplot as plt
 import matplotlib.style as style
 from matplotlib import rcParams
@@ -29,11 +27,25 @@ import matplotlib as mpl
 mpl.rcParams['figure.dpi'] = 150
 rcParams['figure.figsize'] = 6,5
 
-
 df = pd.DataFrame(pd.read_csv('BATADAL_trainingset1.csv')) # No attacks
 df_attacks = pd.DataFrame(pd.read_csv('BATADAL_trainingset2.csv')) # With attacks
 df_nolabels = pd.DataFrame(pd.read_csv('BATADAL_test_dataset.csv')) # With attacks no labels
 pd.set_option('display.expand_frame_repr', False)
+
+# # Add missing attack labels
+# The ATT_FLAG labels in dataset 2 in is incomplete, here we add the missing labels to the dataset.
+# See https://batadal.net/images/Attacks_TrainingDataset2.png
+
+df_attacks = df_attacks.set_index("DATETIME")
+df_attacks[" ATT_FLAG"]["26/09/16 11":"27/09/16 10"] = 1 # Attack #2
+df_attacks[" ATT_FLAG"]["29/10/16 19":"02/11/16 16"] = 1 # Attack #4
+df_attacks[" ATT_FLAG"]["26/11/16 17":"29/11/16 04"] = 1 # Attack #5
+df_attacks[" ATT_FLAG"]["06/12/16 07":"10/12/16 04"] = 1 # Attack #6
+df_attacks[" ATT_FLAG"]["14/12/16 15":"19/12/16 04"] = 1 # Attack #7
+df_attacks = df_attacks.reset_index()
+
+# ## Task 1 - Familiarization
+
 df.describe()
 
 
@@ -141,18 +153,6 @@ pd.DataFrame({"prediction":predictions[1000:2000],
 pd.DataFrame({"prediction":predictions[:100],
             "actual": data[:100]}).plot(figsize=(20,10))
 # -
-
-# ## Add missing attack labels
-
-df_attacks = df_attacks.set_index("DATETIME")
-df_attacks[" ATT_FLAG"]["26/09/16 11":"27/09/16 10"] = 1 # Attack #2
-df_attacks[" ATT_FLAG"]["29/10/16 19":"02/11/16 16"] = 1 # Attack #4
-df_attacks[" ATT_FLAG"]["26/11/16 17":"29/11/16 04"] = 1 # Attack #5
-df_attacks[" ATT_FLAG"]["06/12/16 07":"10/12/16 04"] = 1 # Attack #6
-df_attacks[" ATT_FLAG"]["14/12/16 15":"19/12/16 04"] = 1 # Attack #7
-df_attacks = df_attacks.reset_index()
-
-
 
 # # Task 2 - ARMA
 
@@ -266,7 +266,7 @@ def do_arma(train_series, test_series, params, attack_flags):
     fn=test_model.loc[attack_flags==1].shape[0]-tp
     acc=100.0*(tp+tn)/(tp+tn+fp+fn)
     if (tp+fp)!=0:
-        prec= 100f *tp / (tp + fp)
+        prec= 100.0 *tp / (tp + fp)
     else:
         prec=0
     print(f"TP: {tp}")
@@ -298,7 +298,7 @@ def plot_attacks(residuals, attacks, detected_anomalies, show_range = (0,5000)):
     residuals = residuals - np.mean(resid)
     plt.plot(residuals[show_from:show_to], label="residuals")
     plt.plot(attacks[show_from:show_to], label="Attacks")
-    plt.plot(detected_attacks[show_from:show_to], label="Detected Atacks")
+    plt.plot(detected_attacks[show_from:show_to], label="Detected Attacks")
 
     axes = plt.gca()
     axes.set_ylim([np.min(residuals)*2,max(np.max(residuals)*1.5, 2)])
@@ -498,7 +498,7 @@ def plot_attacks(residuals, attacks, detected_anomalies):
     show_from = 0
     show_to = 5000
     detected_attacks = []
-    for a in range(len(df_attacks)):
+    for a in range(len(attacks)):
             if a in detected_anomalies:
                 detected_attacks.append(0.5)
             else:

@@ -477,8 +477,8 @@ residual_pca = np.square(residual_pca)
 residual_pca = residual_pca.sum(axis=1) 
 
 # Find attacks
-attack_indices = np.where((residual_pca > threshold_max))
-attack_indices2 = np.where((residual_pca < threshold_min))
+attack_indices = np.where((residual_pca > threshold_max*2))
+attack_indices2 = np.where((residual_pca < threshold_min*0.5))
 
 all_detected_attacks = np.append(attack_indices[0], attack_indices2[0])
 
@@ -518,3 +518,124 @@ def plot_attacks(residuals, attacks, detected_anomalies):
     plt.show()
     
 plot_attacks(residual_pca, df_attacks[' ATT_FLAG'], all_detected_attacks)
+# -
+# # Discrete models
+
+# +
+from tslearn.generators import random_walks
+from tslearn.preprocessing import TimeSeriesScalerMeanVariance
+from tslearn.piecewise import SymbolicAggregateApproximation
+from nltk import ngrams
+from collections import Counter
+
+def n_grams(n, data):
+    gram = []
+    for gr in ngrams(data, n):
+        gram.append(''.join(gr))
+    return gram
+
+def perform_sax(dataset, gram_number, symbols, segments):
+    scaler = TimeSeriesScalerMeanVariance(mu=0., std=np.std(dataset))  # Rescale time series
+    dataset = scaler.fit_transform(dataset)
+
+    # SAX transform
+    sax = SymbolicAggregateApproximation(n_segments=segments, alphabet_size_avg=symbols)
+    sax_dataset_inv = sax.inverse_transform(sax.fit_transform(dataset))
+    # print(pd.DataFrame(sax_dataset_inv[0])[0].value_counts())
+#     sax_dataset_inv = sax.fit_transform(dataset)
+#     print(len(sax_dataset_inv[0]))
+
+    # Convert result to strings
+    df_sax = pd.DataFrame(sax_dataset_inv[0])
+    sax_series = df_sax[0]
+    
+    # Convert sax from numeric to characters
+    sax_values = sax_series.unique()
+    alphabet = 'abcdefghijklmnopqrstuvw'
+    sax_dict = {x : alphabet[i]  for i, x in enumerate(sax_values)}
+    sax_list = [sax_dict[x] for x in sax_series]
+    
+    # Convert the list of characters to n_grams based on input parameter
+    tri = n_grams(gram_number, sax_list)
+#     print(Counter(tri))
+    return tri
+
+def detect_anomaly(train, test, attacks, gram_number, symbols, segments):
+    train_tri = perform_sax(train, gram_number, symbols, segments)
+    test_tri = perform_sax(test, gram_number, symbols, segments)
+#     print(train_tri)
+#     print(test_tri)
+    tp, fp, tn, fn = 0, 0, 0, 0
+    anomaly_list = []
+    for i, tri in enumerate(test_tri):
+        attack = attacks[i]
+        if tri in train_tri:
+            if attack == 1:
+                fn += 1
+            else:
+                tn += 1
+        else:
+            anomaly_list.append(i)
+            if attack == 1:
+                tp += 1
+            else:
+                fp += 1
+    # Print scores
+    if tp == 0 and fp == 0:
+        return 'None', -1, list(), 0, 0
+    else:
+        precision = tp / (tp + fp)
+        tag = f'experiment, symbols: {symbols}, segments: {segments}, gram_number: {gram_number}; fn: {fn}; tn: {tn}; fp: {fp}; tp: {tp}'
+        return tag, precision, anomaly_list, fp, tp
+            
+def run_experiments(train, test, attack_indices):
+    """
+    Function that varies the parameters of the sax function
+    """
+    max_prec = 0
+    max_tag = 'None'
+    max_positives = 0
+    for symbols in range(1, 20, 1):
+        for segments in range(1, 250, 20):
+            for gram_number in range(1, 6):
+                    tag, precision, anom_list, fp, tp = detect_anomaly(train, test, attack_indices, gram_number, symbols, segments)
+                    positives = tp + fp
+                    if precision >= max_prec and positives > 20:
+                        max_prec = precision
+                        max_tag = tag
+                        max_positives = positives
+    return max_tag, max_prec
+
+attack_indices = df_attacks[' ATT_FLAG']
+for col in new_df.columns:
+    print(col)
+    max_tag, max_prec = run_experiments(new_df[col], df_attacks[' ' + col], attack_indices)
+    print(f'Max prec: {max_prec}, tag: {max_tag}')
+
+
+# +
+def plot_attacks( attacks, detected_anomalies):
+    show_from = 0
+    show_to = 5000
+    detected_attacks = []
+    for a in range(len(attacks)):
+            if a in detected_anomalies:
+                detected_attacks.append(0.5)
+            else:
+                detected_attacks.append(-99)
+
+    detected_attacks = pd.DataFrame(detected_attacks)
+    plt.figure(figsize=[10,5])
+    plt.plot(attacks[show_from:show_to], label="Actual attacks")
+    plt.plot(detected_attacks[show_from:show_to], label="Detected Attacks")
+
+    axes = plt.gca()
+    axes.set_ylim([0,2])
+    plt.legend()
+    plt.savefig('pca_plot.png')
+    plt.show()
+
+attack_indices = df_attacks[' ATT_FLAG']
+max_tag, max_prec, anomaly_list, fp, tp = detect_anomaly(new_df['L_T1'], df_attacks[' ' + 'L_T1'], attack_indices, 1, 5, 81)
+print(max_tag)
+plot_attacks(df_attacks[' ATT_FLAG'], anomaly_list)

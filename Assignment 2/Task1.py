@@ -264,20 +264,15 @@ def do_arma(train_series, test_series, params, attack_flags):
             fp+=1
     tn=test_model.loc[attack_flags==-999].shape[0]-fp
     fn=test_model.loc[attack_flags==1].shape[0]-tp
-    Accuracy=100.0*(tp+tn)/(tp+tn+fp+fn)
+    acc=100.0*(tp+tn)/(tp+tn+fp+fn)
     if (tp+fp)!=0:
-        Precision=100.0*tp / (tp + fp)
+        prec= 100f *tp / (tp + fp)
     else:
-        Precision=0
-    Recall = 100.0*tp / (tp + fn)
-    F_score = 100.0*2*tp /(2*tp + fp + fn)
-    print ("TP:", tp)
-    print ("FP:", fp)
-    print("Accuracy: %.2f" % Accuracy)
-    print("Precision: %.2f" % Precision)
-    print("Recall: %.2f" %Recall)
-    print("F_score: %.2f" % F_score)
-    print('  ')
+        prec=0
+    print(f"TP: {tp}")
+    print(f"FP: {fp}")
+    print(f"Accuracy: {acc}")
+    print(f"Precision: {prec}")
     return detected_anomalies, resid
 
 
@@ -383,11 +378,6 @@ def normalize(df):
     for col in df:
         df_normalized[col] = normalize.fit_transform(df_normalized[col])[0]
 
-#     for col in df:
-#         assert abs(np.mean(df_normalized[col])) < 1e-9
-#         assert abs(np.std(df_normalized[col])) < 1 + 1e-10
-#         assert abs(np.std(df_normalized[col])) > 1 - 1e-10 or abs(np.std(df_normalized[col])) == 0
-    
     return df_normalized
 
 df_normalized = normalize(df)
@@ -407,6 +397,8 @@ plt.ylabel('Residual')
 plt.figure()
 ax.plot(pca_residual_combined)
 figure.savefig('pcaresidual.png')
+
+
 # -
 
 ## Drop the abnormalities
@@ -497,9 +489,7 @@ for index in all_detected_attacks:
         TP +=1
     else:
         FP +=1 
-        
-residual_pca[2893] > threshold_max
-2893 in all_detected_attacks
+
 print(f'TP={TP}\nFP={FP}')
 
 
@@ -528,8 +518,3 @@ def plot_attacks(residuals, attacks, detected_anomalies):
     plt.show()
     
 plot_attacks(residual_pca, df_attacks[' ATT_FLAG'], all_detected_attacks)
-
-# +
-
-
-# df_attacks.set_index("DATETIME")[" ATT_FLAG"]["26/09/16 09":"27/09/16 10"]

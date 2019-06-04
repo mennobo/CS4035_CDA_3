@@ -142,6 +142,18 @@ pd.DataFrame({"prediction":predictions[:100],
             "actual": data[:100]}).plot(figsize=(20,10))
 # -
 
+# ## Add missing attack labels
+
+df_attacks = df_attacks.set_index("DATETIME")
+df_attacks[" ATT_FLAG"]["26/09/16 11":"27/09/16 10"] = 1 # Attack #2
+df_attacks[" ATT_FLAG"]["29/10/16 19":"02/11/16 16"] = 1 # Attack #4
+df_attacks[" ATT_FLAG"]["26/11/16 17":"29/11/16 04"] = 1 # Attack #5
+df_attacks[" ATT_FLAG"]["06/12/16 07":"10/12/16 04"] = 1 # Attack #6
+df_attacks[" ATT_FLAG"]["14/12/16 15":"19/12/16 04"] = 1 # Attack #7
+df_attacks = df_attacks.reset_index()
+
+
+
 # # Task 2 - ARMA
 
 # +
@@ -150,6 +162,8 @@ pd.DataFrame({"prediction":predictions[:100],
 # Make sure you have statsmodels >0.9.0 as it fails to import statsmodels.api
 # see https://github.com/statsmodels/statsmodels/issues/5759
 # %pip install git+https://github.com/statsmodels/statsmodels
+    
+# If the cell below this runs successfully you do NOT need this, especially the line 'import statsmodels.api as sm'
 
 # +
 import numpy as np
@@ -162,11 +176,6 @@ from statsmodels.graphics.api import qqplot
 mpl.rcParams['figure.dpi'] = 150
 rcParams['figure.figsize'] = 6,5
 
-# Reload dataset to make sure any changes are reset
-df = pd.DataFrame(pd.read_csv('BATADAL_trainingset1.csv')) # No attacks
-df_attacks = pd.DataFrame(pd.read_csv('BATADAL_trainingset2.csv')) # With attacks
-df_nolabels = pd.DataFrame(pd.read_csv('BATADAL_test_dataset.csv')) # With attacks no labels
-pd.set_option('display.expand_frame_repr', False)
 # -
 
 # ## Autocorrelation function
@@ -178,15 +187,6 @@ ax1 = fig.add_subplot(211)
 fig = sm.graphics.tsa.plot_acf(df['F_PU1'].values.squeeze(), lags=40, ax=ax1)
 ax2 = fig.add_subplot(212)
 fig = sm.graphics.tsa.plot_pacf(df['F_PU1'], lags=40, ax=ax2)
-
-# To determine the ARMA parameters we use the following rules of thumb:
-# - Rule 1: If the ACF shows exponential decay, the PACF has a spike at lag 1, and no correlation for other lags, then use one autoregressive (p)parameter
-# - Rule 2: If the ACF shows a sine-wave shape pattern or a set of exponential decays, the PACF has spikes at lags 1 and 2, and no correlation for other lags, the use two autoregressive (p) parameters
-# - Rule 3: If the ACF has a spike at lag 1, no correlation for other lags, and the PACF damps out exponentially, then use one moving average (q) parameter.
-# - Rule 4: If the ACF has spikes at lags 1 and 2, no correlation for other lags, and the PACF has a sine-wave shape pattern or a set of exponential decays, then use two moving average (q) parameter.
-# - Rule 5: If the ACF shows exponential decay starting at lag 1, and the PACF shows exponential decay starting at lag 1, then use one autoregressive (p) and one moving average (q) parameter.
-#
-# Looking at the graphs above, we conclude that rule 2 seems to apply best to out data. Thus, we will use 2 autoregressive and no moving average parameters.
 
 # +
 # "The higher the AR order gets, the lower the AIC gets." you care about the rate of change. When the AIC does not drop substantially with the increase of an AR term, the search can stop for that sensor. 
@@ -235,8 +235,6 @@ def do_arma(train_series, test_series, params, attack_flags):
     fig = qqplot(resid, line='q', ax=ax, fit=True)
     # -
 
-#     stats.normaltest(resid)
-
     # ## ARMA Model Autocorrelation
     print("Autocorrelation plots:")
     fig = plt.figure(figsize=(12,8))
@@ -251,27 +249,10 @@ def do_arma(train_series, test_series, params, attack_flags):
 #                 "actual": train_series[100:400]}).plot(figsize=(20,10))
 
     # ## Anomaly detection    
-#     train_resid = np.square(train_model.resid)
-#     t_max = np.max(train_resid)
-#     t_min = np.min(train_resid)
-    
     resid = test_model.resid
     std = np.std(resid)
     anomaly_thresh = 2 * std
     detected_anomalies = test_model.resid[(resid) > anomaly_thresh]
-#     arma_residuals = np.square(test_model.resid)
-#     print(arma_residuals)
-#     print(f"tmin={t_min}\ntmax={t_max}")
-#     arma_residuals = arma_residuals.sum()
-#     all_detected_attacks = np.where((arma_residuals > t_max or arma_residuals < t_min))
-#     TP = 0
-#     FP = 0
-#     for index in all_detected_attacks:
-#         if index in list(df_attacks.loc[df_attacks[' ATT_FLAG']==1].index):
-#             TP +=1
-#         else:
-#             FP +=1 
-#     print(f"TP={TP}, FP={FP}")
     
     test_model = pd.DataFrame({ 'ATT_FLAG': attack_flags })
     tp=0
@@ -327,29 +308,27 @@ def plot_attacks(residuals, attacks, detected_anomalies, show_range = (0,5000)):
     axes = plt.gca()
     axes.set_ylim([np.min(residuals)*2,max(np.max(residuals)*1.5, 2)])
     plt.legend()
+    plt.savefig("savedplot.png")
     plt.show()
 
 
+
 # +
-# param_sets = [(1,0), (2,0), (3,0), (4,0), (5,0), (6,0), (7,0), (8,0)] # best 4,0
-# param_sets = [(4,0), (4,1), (4,2), (4,3), (4,4), (4,5), (4,6), (4,7), (4,8)] # best 4,5
+# param_sets = [(1,0), (2,0), (3,0), (4,0), (5,0), (6,0), (7,0), (8,0)] # best 2,0
+param_sets = [(2,0), (2,1), (2,2), (2,3), (2,4), (2,5), (2,6), (2,7), (2,8)] # best 2,4
 # test_arma_params(df['F_PU7'], param_sets)
 
 anomalies, resid = do_arma(df['F_PU7'], df_attacks[' F_PU7'], (2,3), df_attacks[' ATT_FLAG'])
-# Zoom in on especially Attack#6, which attacks F_PU7
+# Zoom in on especially Attack#5 and 6, which attacks F_PU7
 plot_attacks(resid, df_attacks[' ATT_FLAG'], anomalies, (3400,3900))
-
-# print("MFE = ", mean_forecast_err(df['P_J256'], prediction))
-# print("MAE = ", mean_absolute_err(df['P_J256'], prediction))
-# print("MSE = ", mean_squared_error(df['P_J256'], prediction))
 
 
 # +
 # param_sets = [(1,0), (2,0), (3,0), (4,0), (5,0), (6,0), (7,0), (8,0)] # best 5,0
-# param_sets = [(5,0), (5,1), (5,2), (5,3), (5,4), (5,5), (5,6), (5,7), (5,8)] # best 5,2?
+# param_sets = [(5,0), (5,1), (5,2), (5,3), (5,4), (5,5), (5,6), (5,7), (5,8)] # best 5,2
 # test_arma_params(df['L_T4'], param_sets)
 
-anomalies, resid = do_arma(df['L_T4'], df_attacks[' L_T4'], (5,2), df_attacks[' ATT_FLAG'])
+anomalies, resid = do_arma(df['L_T4'], df_attacks[' L_T4'], (0,0), df_attacks[' ATT_FLAG'])
 # Zoom in on especially Attack#5 and 6, which attacks F_PU7, affecting L_T4
 plot_attacks(resid, df_attacks[' ATT_FLAG'], anomalies, (3000,4000))
 
@@ -372,13 +351,21 @@ anomalies, resid = do_arma(df['L_T7'], df_attacks[' L_T7'], (3,0), df_attacks[' 
 plot_attacks(resid, df_attacks[' ATT_FLAG'], anomalies, (1500,3000))
 
 # +
-# param_sets = [(1,0), (2,0), (3,0), (4,0), (5,0), (6,0), (7,0), (8,0)] # best 2,0
-# param_sets = [(2,0), (2,1), (2,2), (2,3), (2,4), (2,5), (2,6)] # best 2,4
-# test_arma_params(df['F_PU7'], param_sets)
+# param_sets = [(1,0), (2,0), (3,0), (4,0), (5,0), (6,0), (7,0), (8,0)] # best 5,0
+# param_sets = [(5,0), (5,1), (5,2), (5,3), (5,4), (5,5), (5,6)] # best 5,6
+# test_arma_params(df['P_J300'], param_sets)
 
-anomalies, resid = do_arma(df['P_J256'], df_attacks[' P_J256'], (2,4), df_attacks[' ATT_FLAG'])
+anomalies, resid = do_arma(df['P_J300'], df_attacks[' P_J300'], (5,6), df_attacks[' ATT_FLAG'])
+plot_attacks(resid, df_attacks[' ATT_FLAG'], anomalies, (1500, 3000))
+# + {}
+# param_sets = [(1,0), (2,0), (3,0), (4,0), (5,0), (6,0), (7,0), (8,0)] # best 2,0
+# param_sets = [(2,0), (2,1), (2,2), (2,3), (2,4), (2,5), (2,6)] # best 2,2 or 2,5
+# test_arma_params(df['F_PU10'], param_sets)
+
+anomalies, resid = do_arma(df['F_PU10'], df_attacks[' F_PU10'], (2,5), df_attacks[' ATT_FLAG'])
 plot_attacks(resid, df_attacks[' ATT_FLAG'], anomalies)
 # -
+
 # ## PCA Task
 
 # +
@@ -404,11 +391,6 @@ def normalize(df):
     return df_normalized
 
 df_normalized = normalize(df)
-
-# -
-
-
-
 
 # +
 ## Residuals 
@@ -533,20 +515,21 @@ def plot_attacks(residuals, attacks, detected_anomalies):
                 detected_attacks.append(-99)
 
     detected_attacks = pd.DataFrame(detected_attacks)
-    plt.figure()
+    plt.figure(figsize=[10,5])
     residuals = residuals - np.mean(residuals)
 #     plt.plot(residuals[show_from:show_to], label="residuals (normalized)")
-    plt.plot(attacks[show_from:show_to], label="Atacks")
-    plt.plot(detected_attacks[show_from:show_to], label="Detected Atacks")
+    plt.plot(attacks[show_from:show_to], label="Actual attacks")
+    plt.plot(detected_attacks[show_from:show_to], label="Detected Attacks")
 
     axes = plt.gca()
-    axes.set_ylim([-5,10])
+    axes.set_ylim([0,2])
     plt.legend()
+    plt.savefig('pca_plot.png')
     plt.show()
     
 plot_attacks(residual_pca, df_attacks[' ATT_FLAG'], all_detected_attacks)
 
 # +
 
-# df_attacks.set_index("DATETIME")[" ATT_FLAG"]["09/10/16 07":"11/10/16 23"]
 
+# df_attacks.set_index("DATETIME")[" ATT_FLAG"]["26/09/16 09":"27/09/16 10"]
